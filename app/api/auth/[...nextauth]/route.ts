@@ -1,8 +1,47 @@
 import NextAuth from "next-auth";
-import { authOptions } from "@/app/lib/auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import { PrismaClient } from "@/app/generated/prisma";
+import { compare } from "bcryptjs";
 
-// Creamos el handler usando la configuración importada desde lib/auth.ts
-const handler = NextAuth(authOptions);
+const prisma = new PrismaClient();
+
+// Creamos el handler directamente con la configuración en línea
+const handler = NextAuth({
+  adapter: PrismaAdapter(prisma),
+  providers: [
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "text" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials.password) {
+          return null;
+        }
+        const user = await prisma.user.findUnique({ where: { email: credentials.email } });
+        if (!user) return null;
+        const isValid = await compare(credentials.password, user.password);
+        if (!isValid) return null;
+        return { id: user.id, email: user.email, name: user.name };
+      },
+    }),
+  ],
+  session: { strategy: "jwt" as const },
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) token.id = user.id;
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) session.user.id = token.id as string;
+      return session;
+    },
+  },
+  pages: { signIn: "/auth/signin" },
+  secret: process.env.NEXTAUTH_SECRET,
+});
 
 // Solo exportamos los controladores de ruta necesarios
 export { handler as GET, handler as POST };
